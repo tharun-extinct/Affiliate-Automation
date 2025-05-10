@@ -24,10 +24,13 @@ class AmazonScraper:
             'Accept-Language': 'en-US,en;q=0.5',
             'Accept-Encoding': 'gzip, deflate, br'
         }
-        self.amazon_url = os.getenv('AMAZON_URL')
 
     def get_product_details(self) -> Tuple[str, Optional[str]]:
         """Scrape product details from Amazon."""
+        # Reload environment variables
+        load_dotenv(override=True)
+        self.amazon_url = os.getenv('AMAZON_URL')
+        
         try:
             response = requests.get(self.amazon_url, headers=self.headers, timeout=10)
             response.raise_for_status()
