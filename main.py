@@ -29,6 +29,17 @@ class ProductManager:
         self.load_products()
         logger.info(f"Initialized ProductManager with {len(self.products)} products")
 
+    def clean_url(self, url: str) -> str:
+        """Clean and validate Amazon URL."""
+        from urllib.parse import unquote
+        if not isinstance(url, str):
+            return ""
+        url = unquote(str(url)).strip()
+        if '/dp/' in url:
+            product_id = url.split('/dp/')[1].split('/')[0].split('?')[0]
+            return f"https://www.amazon.in/dp/{product_id}"
+        return url
+
     def load_products(self) -> None:
         """Load products from Excel file."""
         try:
@@ -43,14 +54,17 @@ class ProductManager:
                 # Convert any non-boolean values to False
                 df['posted'] = df['posted'].fillna(False).astype(bool)
             
+            # Clean URLs before creating Product objects
+            df['amazon_url'] = df['amazon_url'].apply(self.clean_url)
+            df = df[df['amazon_url'] != ""]  # Remove rows with invalid URLs
+            
             self.products = [
                 Product(
                     amazon_url=str(row['amazon_url']),
                     affiliate_link=str(row['affiliate_link']),
-                    posted=bool(row['posted'])  # Ensure boolean type
+                    posted=bool(row['posted'])
                 )
                 for _, row in df.iterrows()
-                if pd.notna(row['amazon_url']) and pd.notna(row['affiliate_link'])
             ]
             
             unposted_count = len([p for p in self.products if not p.posted])
