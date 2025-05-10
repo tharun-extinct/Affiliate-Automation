@@ -27,18 +27,30 @@ class ProductManager:
         self.excel_path = excel_path
         self.products: List[Product] = []
         self.load_products()
-        logger.info(f"Initialized ProductManager with {len(self.products)} products")
+        logger.info(f"Initialized ProductManager with {len(self.products)} products")    
 
     def clean_url(self, url: str) -> str:
         """Clean and validate Amazon URL."""
-        from urllib.parse import unquote
+        from urllib.parse import unquote, quote
         if not isinstance(url, str):
             return ""
+        
         url = unquote(str(url)).strip()
+        
+        # Handle /dp/ format
         if '/dp/' in url:
             product_id = url.split('/dp/')[1].split('/')[0].split('?')[0]
             return f"https://www.amazon.in/dp/{product_id}"
-        return url
+        
+        # Handle URLs with spaces and full titles
+        if 'amazon.in' in url:
+            # Split by amazon.in/ and encode the rest
+            base_url = url.split('amazon.in/')
+            if len(base_url) > 1:
+                path = base_url[1].split('?')[0].split(':')[0].strip()
+                return f"https://www.amazon.in/{quote(path)}"
+        
+        return ""
 
     def load_products(self) -> None:
         """Load products from Excel file."""
@@ -90,14 +102,22 @@ class ProductManager:
                 self.products[index].posted = False
 
 
-class AmazonScraper:
+class AmazonScraper:    
     def __init__(self):
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
+            'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'none',
+            'sec-fetch-user': '?1',
+            'upgrade-insecure-requests': '1',
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache'
         }
@@ -114,7 +134,7 @@ class AmazonScraper:
         """Scrape product details from Amazon."""
         try:
             # Clean and decode the URL
-            from urllib.parse import unquote, urlparse
+            from urllib.parse import unquote, urlparse, quote
             clean_url = unquote(product.amazon_url).strip()
             
             # Parse the URL
@@ -126,6 +146,12 @@ class AmazonScraper:
             if '/dp/' in clean_url:
                 product_id = clean_url.split('/dp/')[1].split('/')[0]
                 clean_url = f"https://www.amazon.in/dp/{product_id}"
+            else:
+                # Handle full product name URLs
+                parts = clean_url.split('amazon.in/')
+                if len(parts) > 1:
+                    path = parts[1].split('?')[0].split(':')[0].strip()
+                    clean_url = f"https://www.amazon.in/{quote(path)}"
             
             logger.info(f"Fetching product from: {clean_url}")
             session = await self._get_session()
@@ -142,7 +168,10 @@ class AmazonScraper:
                 title_selectors = [
                     '#productTitle',
                     '.product-title-word-break',
-                    '.a-size-large.product-title-word-break'
+                    '.a-size-large.product-title-word-break',
+                    'h1.a-spacing-none',
+                    'span#productTitle',
+                    'h1 span.a-text-normal'
                 ]
                 
                 title = None
@@ -158,7 +187,9 @@ class AmazonScraper:
                     '#imgBlkFront',
                     '#main-image',
                     'img[data-old-hires]',
-                    'img[data-a-dynamic-image]'
+                    'img[data-a-dynamic-image]',
+                    '.a-dynamic-image',
+                    '#product-image'
                 ]
                 
                 image_url = None
