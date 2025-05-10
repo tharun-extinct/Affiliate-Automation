@@ -12,7 +12,7 @@ from dataclasses import dataclass
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levellevel)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,16 @@ class ProductManager:
         """Load products from Excel file."""
         try:
             df = pd.read_excel(self.excel_path)
+            # Filter out rows with NaN values
+            df = df.dropna(subset=['amazon_url', 'affiliate_link'])
             self.products = [
                 Product(
-                    amazon_url=row['amazon_url'],
-                    affiliate_link=row['affiliate_link'],
+                    amazon_url=str(row['amazon_url']),
+                    affiliate_link=str(row['affiliate_link']),
                     posted=bool(row.get('posted', False))
                 )
                 for _, row in df.iterrows()
+                if pd.notna(row['amazon_url']) and pd.notna(row['affiliate_link'])
             ]
             logger.info(f"Loaded {len(self.products)} products from Excel")
         except Exception as e:

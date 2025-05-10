@@ -20,4 +20,4 @@ venv/
 
 # Excel files
 *.xlsx
-~$*.xlsx  # Excel temporary files
+#~$*.xlsx  # Current Files opened in MS Excel

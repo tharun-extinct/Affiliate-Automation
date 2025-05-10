@@ -3,3 +3,8 @@ beautifulsoup4==4.12.2
 python-telegram-bot[all]==20.7
 python-dotenv==1.0.0
 openpyxl==3.1.2
+pandas==2.1.4
+attrs>=19.1.0
+flatbuffers>=2.0
+matplotlib
+protobuf>=3.11,<4
