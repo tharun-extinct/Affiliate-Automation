@@ -27,6 +27,7 @@ class ProductManager:
         self.excel_path = excel_path
         self.products: List[Product] = []
         self.load_products()
+        logger.info(f"Initialized ProductManager with {len(self.products)} products")
 
     def load_products(self) -> None:
         """Load products from Excel file."""
@@ -34,16 +35,27 @@ class ProductManager:
             df = pd.read_excel(self.excel_path)
             # Filter out rows with NaN values
             df = df.dropna(subset=['amazon_url', 'affiliate_link'])
+            
+            # Ensure 'posted' column exists and has valid boolean values
+            if 'posted' not in df.columns:
+                df['posted'] = False
+            else:
+                # Convert any non-boolean values to False
+                df['posted'] = df['posted'].fillna(False).astype(bool)
+            
             self.products = [
                 Product(
                     amazon_url=str(row['amazon_url']),
                     affiliate_link=str(row['affiliate_link']),
-                    posted=bool(row.get('posted', False))
+                    posted=bool(row['posted'])  # Ensure boolean type
                 )
                 for _, row in df.iterrows()
                 if pd.notna(row['amazon_url']) and pd.notna(row['affiliate_link'])
             ]
-            logger.info(f"Loaded {len(self.products)} products from Excel")
+            
+            unposted_count = len([p for p in self.products if not p.posted])
+            logger.info(f"Loaded {len(self.products)} products from Excel ({unposted_count} unposted)")
+            
         except Exception as e:
             logger.error(f"Error loading Excel file: {e}")
             self.products = []
@@ -52,11 +64,17 @@ class ProductManager:
         """Mark product as posted in Excel."""
         try:
             df = pd.read_excel(self.excel_path)
+            if 'posted' not in df.columns:
+                df['posted'] = False
             df.loc[index, 'posted'] = True
             df.to_excel(self.excel_path, index=False)
-            logger.info(f"Updated status for product at index {index}")
+            logger.info(f"Updated status for product at index {index} as posted")
         except Exception as e:
             logger.error(f"Error updating Excel file: {e}")
+            # Revert the posted status in memory if Excel update fails
+            if 0 <= index < len(self.products):
+                self.products[index].posted = False
+
 
 class AmazonScraper:
     def __init__(self):
@@ -65,61 +83,109 @@ class AmazonScraper:
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
             'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive'
+            'Connection': 'keep-alive',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
         }
         self._session = None
 
     async def _get_session(self):
         if self._session is None:
             import aiohttp
-            self._session = aiohttp.ClientSession(headers=self.headers)
+            timeout = aiohttp.ClientTimeout(total=30)
+            self._session = aiohttp.ClientSession(headers=self.headers, timeout=timeout)
         return self._session
 
     async def get_product_details(self, product: Product) -> Tuple[str, Optional[str]]:
         """Scrape product details from Amazon."""
         try:
+            # Clean and decode the URL
+            from urllib.parse import unquote, urlparse
+            clean_url = unquote(product.amazon_url).strip()
+            
+            # Parse the URL
+            parsed_url = urlparse(clean_url)
+            if not parsed_url.scheme:
+                clean_url = f"https://www.amazon.in/{clean_url.lstrip('/')}"
+            
+            # Extract product ID if present
+            if '/dp/' in clean_url:
+                product_id = clean_url.split('/dp/')[1].split('/')[0]
+                clean_url = f"https://www.amazon.in/dp/{product_id}"
+            
+            logger.info(f"Fetching product from: {clean_url}")
             session = await self._get_session()
-            async with session.get(product.amazon_url, timeout=30) as response:
+            
+            async with session.get(clean_url) as response:
                 if response.status != 200:
-                    logger.error(f"Error fetching product: HTTP {response.status}")
-                    await asyncio.sleep(5)  # Wait before retry
-                    return 'No Title Found', None
+                    logger.error(f"HTTP {response.status} for {clean_url}")
+                    return None, None
                 
                 content = await response.text()
                 soup = BeautifulSoup(content, 'html.parser')
                 
                 # Try multiple selectors for title
-                title = (
-                    soup.find(id='productTitle') or 
-                    soup.find('h1', {'class': 'a-text-normal'}) or
-                    soup.find('span', {'class': 'a-size-large product-title-word-break'})
-                )
+                title_selectors = [
+                    '#productTitle',
+                    '.product-title-word-break',
+                    '.a-size-large.product-title-word-break'
+                ]
+                
+                title = None
+                for selector in title_selectors:
+                    element = soup.select_one(selector)
+                    if element:
+                        title = element.get_text(strip=True)
+                        break
                 
                 # Try multiple selectors for image
-                image = (
-                    soup.find('img', {'id': 'landingImage'}) or
-                    soup.find('img', {'id': 'imgBlkFront'}) or
-                    soup.find('img', {'class': 'a-dynamic-image'})
-                )
+                image_selectors = [
+                    '#landingImage',
+                    '#imgBlkFront',
+                    '#main-image',
+                    'img[data-old-hires]',
+                    'img[data-a-dynamic-image]'
+                ]
                 
-                product_title = title.get_text(strip=True) if title else 'No Title Found'
-                image_url = image.get('src') if image else None
+                image_url = None
+                for selector in image_selectors:
+                    img = soup.select_one(selector)
+                    if img:
+                        image_url = (
+                            img.get('data-old-hires') or 
+                            img.get('src') or 
+                            img.get('data-a-dynamic-image')
+                        )
+                        if image_url:
+                            break
                 
-                if image_url and not image_url.startswith('http'):
-                    image_url = f"https://www.amazon.in{image_url}"
-                    
-                # Add a small delay between requests to avoid rate limiting
-                await asyncio.sleep(2)
-                return product_title, image_url
+                if not title or not image_url:
+                    logger.error(f"Failed to extract details from {clean_url}")
+                    return None, None
+                
+                # Clean up image URL
+                if isinstance(image_url, str):
+                    if not image_url.startswith('http'):
+                        image_url = f"https:{image_url}" if image_url.startswith('//') else f"https://www.amazon.in{image_url}"
+                else:
+                    # Handle JSON-encoded image URLs
+                    import json
+                    try:
+                        image_urls = json.loads(image_url)
+                        image_url = next(iter(image_urls.keys()))
+                    except:
+                        logger.error("Failed to parse image URL JSON")
+                        return None, None
+                
+                logger.info(f"Successfully extracted details for: {title[:50]}...")
+                return title, image_url
                 
         except asyncio.TimeoutError:
-            logger.error(f"Timeout while fetching product: {product.amazon_url}")
-            await asyncio.sleep(5)  # Wait before retry
-            return 'No Title Found', None
+            logger.error(f"Timeout while fetching product")
+            return None, None
         except Exception as e:
             logger.error(f"Error fetching product details: {type(e).__name__}: {str(e)}")
-            await asyncio.sleep(5)  # Wait before retry
-            return 'No Title Found', None
+            return None, None
 
 class TelegramPoster:
     def __init__(self):
@@ -162,45 +228,59 @@ async def main():
     
     try:
         while True:
-            for index, product in enumerate(product_manager.products):
-                if not product.posted:
-                    # Try up to 3 times for each product
-                    for attempt in range(3):
-                        try:
-                            # Get product details
-                            title, image_url = await scraper.get_product_details(product)
-                            
-                            if title == 'No Title Found' or not image_url:
-                                logger.warning(f"Attempt {attempt + 1}: Failed to get product details, retrying...")
-                                await asyncio.sleep(10)  # Wait before retry
-                                continue
-                            
-                            # Post to Telegram
-                            success = await poster.post_product(title, image_url, product.affiliate_link)
-                            
-                            if success:
-                                # Update Excel file
-                                product_manager.update_product_status(index)
-                                product.posted = True
-                                # Break the retry loop on success
-                                break
-                            
-                            logger.warning(f"Attempt {attempt + 1}: Failed to post product, retrying...")
-                            await asyncio.sleep(10)  # Wait before retry
-                            
-                        except Exception as e:
-                            logger.error(f"Error processing product: {type(e).__name__}: {str(e)}")
-                            if attempt == 2:  # Last attempt
-                                logger.error("Failed all retry attempts, moving to next product")
-                            await asyncio.sleep(10)
-                    
-                    # Wait for 1 minute before next product
-                    await asyncio.sleep(60)
+            # Count unposted products
+            unposted_products = [p for p in product_manager.products if not p.posted]
+            unposted_count = len(unposted_products)
             
-            # All products posted, wait for 5 minutes before checking for new products
-            logger.info("Checking for new products in 5 minutes...")
-            await asyncio.sleep(300)
-            product_manager.load_products()  # Reload products from Excel
+            if unposted_count > 0:
+                logger.info(f"Found {unposted_count} unposted products")
+                
+                for index, product in enumerate(product_manager.products):
+                    if not product.posted:
+                        logger.info(f"Processing product {index + 1}/{len(product_manager.products)}")
+                        
+                        # Try up to 3 times for each product
+                        for attempt in range(3):
+                            try:
+                                # Get product details
+                                title, image_url = await scraper.get_product_details(product)
+                                
+                                if not title or not image_url:
+                                    logger.warning(f"Attempt {attempt + 1}: Failed to get product details")
+                                    if attempt < 2:  # Only sleep if we're going to retry
+                                        await asyncio.sleep(10)
+                                    continue
+                                
+                                # Post to Telegram
+                                success = await poster.post_product(title, image_url, product.affiliate_link)
+                                
+                                if success:
+                                    # Update Excel file and memory
+                                    product_manager.update_product_status(index)
+                                    product.posted = True
+                                    logger.info(f"Successfully posted product {index + 1}")
+                                    break  # Break retry loop on success
+                                
+                                logger.warning(f"Attempt {attempt + 1}: Failed to post product")
+                                if attempt < 2:  # Only sleep if we're going to retry
+                                    await asyncio.sleep(10)
+                                
+                            except Exception as e:
+                                logger.error(f"Error processing product: {type(e).__name__}: {str(e)}")
+                                if attempt < 2:  # Only sleep if we're going to retry
+                                    await asyncio.sleep(10)
+                        
+                        # Wait between products to avoid rate limiting
+                        await asyncio.sleep(60)
+                
+            # Reload products from Excel to check for new ones
+            logger.info("Checking for new products...")
+            product_manager.load_products()
+            
+            # If no unposted products, wait longer before next check
+            if unposted_count == 0:
+                logger.info("No unposted products found. Waiting 5 minutes before next check...")
+                await asyncio.sleep(300)
             
     except Exception as e:
         logger.error(f"Main loop error: {type(e).__name__}: {str(e)}")
