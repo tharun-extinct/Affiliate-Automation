@@ -13,7 +13,75 @@ venv/
 
 # IDE
 .vscode/
+.idea/# Environment variables
+.env
+firebase-credentials.json
+
+# Sensitive files
+firebase-key.json
+**/firebase-key.json
+*.pem
+*.key
+credentials.json
+*credentials*.json
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+.venv/
+*.so
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
 .idea/
+*.whatsapp_data/
+
+# Logs
+*.log
+
+# Excel files
+*.xlsx
+#~$*.xlsx  # Current Files opened in MS Excel
+
+# WhatsApp Web data directory
+whatsapp_data/
+**/whatsapp_data/
+
+# Chrome User Data
+**/User Data/
+**/Default/
+**/*.pma
+**/*.db
+**/*.db-journal
+
+# Virtual Environment
+venv/
+env/
+ENV/
 
 # Logs
 *.log
