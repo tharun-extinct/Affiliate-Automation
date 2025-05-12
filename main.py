@@ -49,12 +49,10 @@ async def main():
                             
                             # Post to Telegram
                             success = await poster.post_product(title, image_url, product.affiliate_link)
-                            
                             if success:
-                                # Update Excel file and memory
-                                product_manager.update_product_status(index)
-                                product.posted = True
-                                logger.info(f"Successfully posted product {index + 1}")
+                                # Update Excel file and memory using product URL
+                                product_manager.update_product_status(product.amazon_url)
+                                logger.info(f"Successfully posted product: {title[:50]}...")
                                 # Force reload products to ensure we have the latest status
                                 product_manager.load_products()
                                 break  # Break retry loop on success

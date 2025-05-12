@@ -64,17 +64,34 @@ class ProductManager:
             logger.error(f"Error loading Excel file: {e}")
             self.products = []
 
-    def update_product_status(self, index: int) -> None:
-        """Mark product as posted in Excel."""
+    def update_product_status(self, product_url: str) -> None:
+        """Mark product as posted in Excel using URL as identifier."""
         try:
             df = pd.read_excel(self.excel_path)
             if 'posted' not in df.columns:
                 df['posted'] = False
-            df.loc[index, 'posted'] = True
-            df.to_excel(self.excel_path, index=False)
-            logger.info(f"Updated status for product at index {index} as posted")
+            
+            # Clean the URL to match the format in Excel
+            clean_url = self.clean_url(product_url)
+            
+            # Find the row with matching URL and update its status
+            mask = df['amazon_url'].apply(self.clean_url) == clean_url
+            if mask.any():
+                df.loc[mask, 'posted'] = True
+                df.to_excel(self.excel_path, index=False)
+                logger.info(f"Updated status for product with URL: {clean_url}")
+                
+                # Update in memory too
+                for product in self.products:
+                    if self.clean_url(product.amazon_url) == clean_url:
+                        product.posted = True
+                        break
+            else:
+                logger.error(f"Could not find product with URL: {clean_url}")
         except Exception as e:
             logger.error(f"Error updating Excel file: {e}")
-            # Revert the posted status in memory if Excel update fails
-            if 0 <= index < len(self.products):
-                self.products[index].posted = False
+            # Find the product in memory and revert its status
+            for product in self.products:
+                if self.clean_url(product.amazon_url) == clean_url:
+                    product.posted = False
+                    break
