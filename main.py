@@ -1,4 +1,3 @@
-
 import logging
 from amazon_scraper import AmazonScraper
 from product_manager import ProductManager
